@@ -10,3 +10,4 @@ This project automatically translates English documentation into Simplified Chin
 ## Welcome
 
 This is a free automatic translation project powered by open source technology.
+This system can automatically translate all Markdown files in the repository.
