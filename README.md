@@ -7,3 +7,6 @@ This project automatically translates English documentation into Simplified Chin
 - Automatic translation
 - GitHub Actions automation
 - Chinese README generation
+## Welcome
+
+This is a free automatic translation project powered by open source technology.
