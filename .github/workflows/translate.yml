@@ -1,11 +1,12 @@
-name: Auto Translate README to Chinese
+name: Auto Translate Markdown to Chinese
 
 on:
   push:
     branches:
       - main
     paths:
-      - "README.md"
+      - "**.md"
+      - ".github/workflows/translate.yml"
 
 permissions:
   contents: write
@@ -14,11 +15,14 @@ jobs:
   translate:
     runs-on: ubuntu-latest
 
+    # 防止自动翻译提交再次触发无限循环
     if: "!contains(github.event.head_commit.message, '[auto-translate]')"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -49,58 +53,91 @@ jobs:
           )
           PYTHON
 
-      - name: Translate README
+      - name: Translate all Markdown files
         run: |
           python << 'PYTHON'
           from pathlib import Path
           import re
           import argostranslate.translate
 
-          content = Path("README.md").read_text(
-              encoding="utf-8"
-          )
+          # 不翻译这些目录
+          EXCLUDED_DIRS = {
+              ".git",
+              ".github"
+          }
 
-          # 保护 Markdown 代码块
-          parts = re.split(
-              r"(```.*?```)",
-              content,
-              flags=re.DOTALL
-          )
+          def should_skip(path):
+              return any(part in EXCLUDED_DIRS for part in path.parts)
 
-          translated_parts = []
+          def translate_text(text):
+              # 保护 Markdown 代码块
+              parts = re.split(
+                  r"(```.*?```)",
+                  text,
+                  flags=re.DOTALL
+              )
 
-          for part in parts:
-              if part.startswith("```"):
-                  translated_parts.append(part)
-              elif part.strip():
-                  translated_parts.append(
-                      argostranslate.translate.translate(
-                          part,
-                          "en",
-                          "zh"
+              result = []
+
+              for part in parts:
+                  if part.startswith("```"):
+                      result.append(part)
+                  elif part.strip():
+                      result.append(
+                          argostranslate.translate.translate(
+                              part,
+                              "en",
+                              "zh"
+                          )
                       )
-                  )
-              else:
-                  translated_parts.append(part)
+                  else:
+                      result.append(part)
 
-          translated = "".join(translated_parts)
+              return "".join(result)
 
-          Path("README.zh-CN.md").write_text(
-              translated,
-              encoding="utf-8"
-          )
+          markdown_files = Path(".").rglob("*.md")
+
+          for source_file in markdown_files:
+
+              # 跳过 GitHub 内部文件夹
+              if should_skip(source_file):
+                  continue
+
+              # 跳过已经生成的中文文件
+              if source_file.name.endswith(".zh-CN.md"):
+                  continue
+
+              chinese_file = source_file.with_name(
+                  source_file.stem + ".zh-CN.md"
+              )
+
+              content = source_file.read_text(
+                  encoding="utf-8"
+              )
+
+              translated = translate_text(content)
+
+              chinese_file.write_text(
+                  translated,
+                  encoding="utf-8"
+              )
+
+              print(
+                  f"Translated: "
+                  f"{source_file} -> {chinese_file}"
+              )
           PYTHON
 
-      - name: Commit translated README
+      - name: Commit translated files
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add README.zh-CN.md
+          git add '*.zh-CN.md'
 
           if git diff --cached --quiet; then
             echo "No translation changes."
           else
-            git commit -m "[auto-translate] Update Chinese README"
+            git commit -m "[auto-translate] Update Chinese Markdown files"
             git push
           fi
