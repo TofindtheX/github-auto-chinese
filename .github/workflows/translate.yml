@@ -1,0 +1,83 @@
+name: Auto Translate README to Chinese
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "README.md"
+
+permissions:
+  contents: write
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+
+    # 避免工作流自己生成的提交再次无限触发
+    if: "!contains(github.event.head_commit.message, '[auto-translate]')"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install OpenAI SDK
+        run: |
+          pip install --upgrade openai
+
+      - name: Translate README
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from pathlib import Path
+          from openai import OpenAI
+
+          client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+          english = Path("README.md").read_text(encoding="utf-8")
+
+          prompt = """
+          Translate the following GitHub README from English into Simplified Chinese.
+
+          Rules:
+          1. Preserve all Markdown formatting.
+          2. Do not translate code blocks.
+          3. Do not translate URLs.
+          4. Keep project names and technical terms in English when appropriate.
+          5. Output ONLY the translated README content.
+          6. Do not add explanations before or after the translation.
+
+          README:
+          """
+
+          response = client.responses.create(
+              model="gpt-5-mini",
+              input=prompt + "\n\n" + english
+          )
+
+          Path("README.zh-CN.md").write_text(
+              response.output_text,
+              encoding="utf-8"
+          )
+          PYTHON
+
+      - name: Commit translated README
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add README.zh-CN.md
+
+          if git diff --cached --quiet; then
+            echo "No translation changes."
+          else
+            git commit -m "[auto-translate] Update Chinese README"
+            git push
+          fi
