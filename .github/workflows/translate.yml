@@ -14,7 +14,6 @@ jobs:
   translate:
     runs-on: ubuntu-latest
 
-    # 避免工作流自己生成的提交再次无限触发
     if: "!contains(github.event.head_commit.message, '[auto-translate]')"
 
     steps:
@@ -26,44 +25,68 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install OpenAI SDK
+      - name: Install Argos Translate
         run: |
-          pip install --upgrade openai
+          pip install --upgrade pip
+          pip install argostranslate
 
-      - name: Translate README
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Install English to Chinese model
         run: |
           python << 'PYTHON'
-          import os
-          from pathlib import Path
-          from openai import OpenAI
+          import argostranslate.package
 
-          client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+          argostranslate.package.update_package_index()
 
-          english = Path("README.md").read_text(encoding="utf-8")
+          packages = argostranslate.package.get_available_packages()
 
-          prompt = """
-          Translate the following GitHub README from English into Simplified Chinese.
-
-          Rules:
-          1. Preserve all Markdown formatting.
-          2. Do not translate code blocks.
-          3. Do not translate URLs.
-          4. Keep project names and technical terms in English when appropriate.
-          5. Output ONLY the translated README content.
-          6. Do not add explanations before or after the translation.
-
-          README:
-          """
-
-          response = client.responses.create(
-              model="gpt-5-mini",
-              input=prompt + "\n\n" + english
+          package = next(
+              p for p in packages
+              if p.from_code == "en" and p.to_code == "zh"
           )
 
+          argostranslate.package.install_from_path(
+              package.download()
+          )
+          PYTHON
+
+      - name: Translate README
+        run: |
+          python << 'PYTHON'
+          from pathlib import Path
+          import re
+          import argostranslate.translate
+
+          content = Path("README.md").read_text(
+              encoding="utf-8"
+          )
+
+          # 保护 Markdown 代码块
+          parts = re.split(
+              r"(```.*?```)",
+              content,
+              flags=re.DOTALL
+          )
+
+          translated_parts = []
+
+          for part in parts:
+              if part.startswith("```"):
+                  translated_parts.append(part)
+              elif part.strip():
+                  translated_parts.append(
+                      argostranslate.translate.translate(
+                          part,
+                          "en",
+                          "zh"
+                      )
+                  )
+              else:
+                  translated_parts.append(part)
+
+          translated = "".join(translated_parts)
+
           Path("README.zh-CN.md").write_text(
-              response.output_text,
+              translated,
               encoding="utf-8"
           )
           PYTHON
