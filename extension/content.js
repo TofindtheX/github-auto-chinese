@@ -1,14 +1,20 @@
 // GitHub Auto Chinese
-// Local Qwen3.5:4B translator
+// Local Qwen3.5:4B intelligent page translator
 
 (function () {
   "use strict";
 
   const TRANSLATED_ATTR = "data-github-auto-chinese";
-  const MAX_TEXT_LENGTH = 500;
+  const TRANSLATING_ATTR = "data-github-auto-chinese-translating";
+
+  // 每批最多发送多少个文本节点
+  const BATCH_SIZE = 8;
+
+  // 单个文本最大长度
+  const MAX_TEXT_LENGTH = 800;
 
   // 不处理的 HTML 标签
-  const ignoredTags = new Set([
+  const IGNORED_TAGS = new Set([
     "SCRIPT",
     "STYLE",
     "NOSCRIPT",
@@ -18,14 +24,26 @@
     "OPTION",
     "CODE",
     "PRE",
-    "SVG"
+    "SVG",
+    "CANVAS"
   ]);
 
-  // 已知需要保持原样的技术名称
+  // GitHub 中明确不应该翻译的区域
+  const IGNORED_SELECTORS = [
+    "pre",
+    "code",
+    ".blob-code",
+    ".highlight",
+    ".js-file-line-container",
+    "[contenteditable='true']",
+    "[data-testid='file-content'] .react-code-text"
+  ];
+
+  // 常见技术名称
   const protectedTerms = [
     "GitHub",
-    "Git",
     "GitHub Copilot",
+    "Git",
     "OpenAI",
     "GPT",
     "GPT-5",
@@ -38,31 +56,153 @@
     "Llama",
     "DeepSeek",
     "Mistral",
+    "Phi",
+    "Gemma",
     "React",
     "Vue",
     "Angular",
+    "Svelte",
     "JavaScript",
     "TypeScript",
     "Python",
     "Node.js",
+    "Node",
     "Docker",
     "Kubernetes",
     "Markdown",
     "HTML",
     "CSS",
     "JSON",
+    "XML",
     "REST",
     "GraphQL",
     "API",
+    "API URL",
     "Ollama",
     "VS Code",
+    "Visual Studio Code",
     "Microsoft",
     "Windows",
     "Linux",
-    "macOS"
+    "macOS",
+    "Ubuntu",
+    "npm",
+    "pnpm",
+    "yarn",
+    "Bun",
+    "Vite",
+    "Next.js",
+    "Nuxt",
+    "Django",
+    "Flask",
+    "FastAPI",
+    "Rust",
+    "Go",
+    "Java",
+    "C++",
+    "C#",
+    "PHP",
+    "Ruby",
+    "Swift",
+    "Kotlin",
+    "SQL",
+    "PostgreSQL",
+    "MySQL",
+    "Redis",
+    "MongoDB",
+    "Firebase",
+    "Supabase",
+    "TensorFlow",
+    "PyTorch"
   ];
 
-  // 判断文本节点是否应该跳过
+  // 判断元素是否在不应该翻译的区域
+  function isIgnoredElement(element) {
+    if (!element) {
+      return true;
+    }
+
+    if (IGNORED_TAGS.has(element.tagName)) {
+      return true;
+    }
+
+    for (const selector of IGNORED_SELECTORS) {
+      if (element.matches?.(selector)) {
+        return true;
+      }
+
+      if (element.closest?.(selector)) {
+        return true;
+      }
+    }
+
+    if (
+      element.closest?.(
+        `[${TRANSLATED_ATTR}], [${TRANSLATING_ATTR}]`
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // 判断文本是否值得翻译
+  function shouldTranslateText(text) {
+    if (!text) {
+      return false;
+    }
+
+    const trimmed = text.trim();
+
+    if (!trimmed) {
+      return false;
+    }
+
+    // 太长的文本暂时跳过
+    if (trimmed.length > MAX_TEXT_LENGTH) {
+      return false;
+    }
+
+    // 没有英文
+    if (!/[A-Za-z]/.test(trimmed)) {
+      return false;
+    }
+
+    // URL
+    if (/^https?:\/\//i.test(trimmed)) {
+      return false;
+    }
+
+    // 纯代码风格
+    if (
+      /^[\w./\\:@#$%&*+=<>()[\]{}'"`~-]+$/.test(trimmed)
+    ) {
+      return false;
+    }
+
+    // 纯命令行
+    if (
+      /^(npm|pnpm|yarn|git|python|pip|node|docker|ollama)\s+/i.test(
+        trimmed
+      )
+    ) {
+      return false;
+    }
+
+    // 文件名
+    if (
+      /^[\w.-]+\.(md|js|ts|tsx|jsx|json|yml|yaml|py|css|html|xml|sh|bat|ps1|go|rs|java|c|cpp|h|lock|toml|ini)$/i.test(
+        trimmed
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  // 判断文本节点
   function shouldIgnoreNode(node) {
     if (!node || node.nodeType !== Node.TEXT_NODE) {
       return true;
@@ -74,51 +214,18 @@
       return true;
     }
 
-    if (ignoredTags.has(parent.tagName)) {
+    if (isIgnoredElement(parent)) {
       return true;
     }
 
-    // GitHub 代码区域
-    if (
-      parent.closest(
-        ".blob-code, .highlight, .js-file-line-container, pre, code"
-      )
-    ) {
-      return true;
-    }
-
-    // 已经翻译过
-    if (parent.closest(`[${TRANSLATED_ATTR}]`)) {
-      return true;
-    }
-
-    const text = node.nodeValue;
-
-    if (!text || !text.trim()) {
-      return true;
-    }
-
-    const trimmed = text.trim();
-
-    // 太长的内容暂时跳过
-    if (trimmed.length > MAX_TEXT_LENGTH) {
-      return true;
-    }
-
-    // 纯数字、符号、空白
-    if (!/[A-Za-z]/.test(trimmed)) {
-      return true;
-    }
-
-    // URL
-    if (/^https?:\/\//i.test(trimmed)) {
+    if (!shouldTranslateText(node.nodeValue)) {
       return true;
     }
 
     return false;
   }
 
-  // 保护技术名、文件名、URL、命令等
+  // 保护技术内容
   function protectText(text) {
     const protectedItems = [];
     let result = text;
@@ -136,29 +243,47 @@
     // URL
     protect(/https?:\/\/[^\s]+/gi);
 
-    // Markdown / 代码反引号
-    protect(/`[^`]+`/g);
+    // Markdown 代码
+    protect(/`[^`\n]+`/g);
 
     // 文件名
     protect(
-      /\b[\w.-]+\.(?:md|js|ts|tsx|jsx|json|yml|yaml|py|css|html|xml|sh|bat|ps1|go|rs|java|c|cpp|h|lock|toml|ini)\b/gi
+      /\b[\w.-]+\.(?:md|js|ts|tsx|jsx|json|yml|yaml|py|css|html|xml|sh|bat|ps1|go|rs|java|c|cpp|h|lock|toml|ini|env|sql)\b/gi
     );
 
-    // 命令行参数
+    // 命令参数
     protect(/--[a-zA-Z0-9_-]+/g);
 
     // API 路径
     protect(/\/api\/[A-Za-z0-9_./:-]+/g);
 
+    // GitHub owner/repository
+    protect(
+      /\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\b/g
+    );
+
     // Git commit hash
     protect(/\b[a-f0-9]{7,40}\b/gi);
 
     // 版本号
-    protect(/\bv?\d+\.\d+(?:\.\d+)?(?:[-+][\w.-]+)?\b/gi);
+    protect(
+      /\bv?\d+\.\d+(?:\.\d+)?(?:[-+][\w.-]+)?\b/gi
+    );
+
+    // Issue / PR 编号
+    protect(/(?:#|issue\s+|PR\s+)\d+\b/gi);
+
+    // 模型名称
+    protect(
+      /\b(?:GPT|Qwen|Claude|Gemini|Llama|DeepSeek|Mistral|Phi|Gemma)[\w.:/-]*/gi
+    );
 
     // 已知技术名称
-    protectedTerms.forEach(function (term) {
-      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const term of protectedTerms) {
+      const escaped = term.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
 
       const regex = new RegExp(
         `\\b${escaped}\\b`,
@@ -166,12 +291,7 @@
       );
 
       protect(regex);
-    });
-
-    // 模型名称
-    protect(
-      /\b(?:GPT|Qwen|Claude|Gemini|Llama|DeepSeek|Mistral|Phi|Gemma)[\w.:/-]*/gi
-    );
+    }
 
     return {
       text: result,
@@ -179,20 +299,22 @@
     };
   }
 
-  // 恢复被保护的内容
+  // 恢复技术内容
   function restoreText(text, protectedItems) {
     let result = text;
 
     protectedItems.forEach(function (item, index) {
       const placeholder = `⟦KEEP_${index}⟧`;
 
-      result = result.split(placeholder).join(item);
+      result = result
+        .split(placeholder)
+        .join(item);
     });
 
     return result;
   }
 
-  // 向 background.js 请求 Qwen 翻译
+  // 请求 Qwen
   function translateWithQwen(text) {
     return new Promise(function (resolve, reject) {
       chrome.runtime.sendMessage(
@@ -203,7 +325,9 @@
         function (response) {
           if (chrome.runtime.lastError) {
             reject(
-              new Error(chrome.runtime.lastError.message)
+              new Error(
+                chrome.runtime.lastError.message
+              )
             );
 
             return;
@@ -212,171 +336,252 @@
           if (!response || !response.ok) {
             reject(
               new Error(
-                response && response.error
-                  ? response.error
-                  : "翻译失败"
+                response?.error || "翻译失败"
               )
             );
 
             return;
           }
 
-          resolve(response.text);
+          resolve(response.text || "");
         }
       );
     });
   }
 
   // 翻译单个文本节点
-  async function translateTextNode(node) {
+  async function translateNode(node) {
     if (shouldIgnoreNode(node)) {
       return;
     }
 
-    const originalText = node.nodeValue;
+    const parent = node.parentElement;
 
-    if (!originalText || !originalText.trim()) {
+    if (!parent) {
       return;
     }
 
-    const trimmed = originalText.trim();
+    const original = node.nodeValue;
 
-    // 防止重复处理
-    if (
-      node.parentElement &&
-      node.parentElement.hasAttribute(TRANSLATED_ATTR)
-    ) {
+    if (!original) {
       return;
     }
+
+    const leading =
+      original.match(/^\s*/)?.[0] || "";
+
+    const trailing =
+      original.match(/\s*$/)?.[0] || "";
+
+    const trimmed = original.trim();
 
     const protectedData = protectText(trimmed);
 
-    // 如果没有真正需要翻译的英文，跳过
+    // 保护后已经没有需要翻译的英文
     if (!/[A-Za-z]/.test(protectedData.text)) {
       return;
     }
 
+    // 标记正在翻译
+    parent.setAttribute(
+      TRANSLATING_ATTR,
+      "true"
+    );
+
     try {
-      const translated = await translateWithQwen(
-        protectedData.text
-      );
+      const translated =
+        await translateWithQwen(
+          protectedData.text
+        );
 
       if (!translated) {
         return;
       }
 
-      const restored = restoreText(
-        translated,
-        protectedData.protectedItems
-      );
+      const restored =
+        restoreText(
+          translated.trim(),
+          protectedData.protectedItems
+        );
 
       if (!restored || restored === trimmed) {
         return;
       }
-
-      // 保留原文本前后的空格
-      const leading =
-        originalText.match(/^\s*/)?.[0] || "";
-
-      const trailing =
-        originalText.match(/\s*$/)?.[0] || "";
 
       node.nodeValue =
         leading +
         restored +
         trailing;
 
-      if (node.parentElement) {
-        node.parentElement.setAttribute(
-          TRANSLATED_ATTR,
-          "true"
-        );
-      }
+      parent.setAttribute(
+        TRANSLATED_ATTR,
+        "true"
+      );
+
     } catch (error) {
       console.warn(
-        "GitHub Auto Chinese:",
+        "GitHub Auto Chinese translation error:",
         error
+      );
+
+    } finally {
+      parent.removeAttribute(
+        TRANSLATING_ATTR
       );
     }
   }
 
-  // 找到页面上的文本节点
+  // 收集文本节点
   function collectTextNodes(root) {
     const nodes = [];
 
-    const walker = document.createTreeWalker(
-      root,
-      NodeFilter.SHOW_TEXT
-    );
+    if (!root) {
+      return nodes;
+    }
 
-    let current;
+    const walker =
+      document.createTreeWalker(
+        root,
+        NodeFilter.SHOW_TEXT
+      );
 
-    while ((current = walker.nextNode())) {
-      if (!shouldIgnoreNode(current)) {
-        nodes.push(current);
+    let node;
+
+    while (
+      (node = walker.nextNode())
+    ) {
+      if (!shouldIgnoreNode(node)) {
+        nodes.push(node);
       }
     }
 
     return nodes;
   }
 
-  // 翻译页面
-  async function translatePage(root = document.body) {
+  // 分批翻译
+  async function translatePage(root) {
     if (!root) {
       return;
     }
 
-    const nodes = collectTextNodes(root);
+    const nodes =
+      collectTextNodes(root);
 
-    // 一次处理一个，避免 Ollama 同时收到大量请求
-    for (const node of nodes) {
-      await translateTextNode(node);
+    if (!nodes.length) {
+      return;
     }
+
+    console.log(
+      `GitHub Auto Chinese: found ${nodes.length} text nodes`
+    );
+
+    for (
+      let i = 0;
+      i < nodes.length;
+      i += BATCH_SIZE
+    ) {
+      const batch =
+        nodes.slice(
+          i,
+          i + BATCH_SIZE
+        );
+
+      await Promise.all(
+        batch.map(function (node) {
+          return translateNode(node);
+        })
+      );
+
+      // 给浏览器一点喘息时间
+      await new Promise(
+        function (resolve) {
+          setTimeout(resolve, 100);
+        }
+      );
+    }
+
+    console.log(
+      "GitHub Auto Chinese: translation batch finished."
+    );
   }
 
-  // GitHub 是动态页面，所以监听页面变化
-  let timer = null;
+  // 防抖
+  let observerTimer = null;
 
-  const observer = new MutationObserver(
-    function (mutations) {
-      clearTimeout(timer);
+  function scheduleTranslation(root) {
+    clearTimeout(observerTimer);
 
-      timer = setTimeout(function () {
-        for (const mutation of mutations) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              translatePage(node);
-            }
+    observerTimer = setTimeout(
+      function () {
+        translatePage(root);
+      },
+      800
+    );
+  }
 
-            if (node.nodeType === Node.TEXT_NODE) {
-              translateTextNode(node);
+  // 监听 GitHub 动态页面
+  function startObserver() {
+    const observer =
+      new MutationObserver(
+        function (mutations) {
+          const elements = [];
+
+          for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+              if (
+                node.nodeType ===
+                Node.ELEMENT_NODE
+              ) {
+                elements.push(node);
+              }
             }
           }
+
+          if (elements.length) {
+            scheduleTranslation(
+              document.body
+            );
+          }
         }
-      }, 1200);
-    }
-  );
+      );
+
+    observer.observe(
+      document.body,
+      {
+        childList: true,
+        subtree: true
+      }
+    );
+  }
 
   // 启动
-  function start() {
-    translatePage();
+  async function start() {
+    console.log(
+      "GitHub Auto Chinese: Local Qwen translator starting..."
+    );
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    await translatePage(
+      document.body
+    );
+
+    startObserver();
 
     console.log(
       "GitHub Auto Chinese: Local Qwen translator started."
     );
   }
 
-  if (document.readyState === "loading") {
+  if (
+    document.readyState ===
+    "loading"
+  ) {
     document.addEventListener(
       "DOMContentLoaded",
-      start
+      start,
+      { once: true }
     );
   } else {
     start();
   }
+
 })();
