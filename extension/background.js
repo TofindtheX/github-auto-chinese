@@ -1,103 +1,96 @@
-// GitHub Auto Chinese - Local Qwen Translator
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type !== "translate") {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== "translate") {
     return;
   }
 
-  translateWithQwen(message.text)
-    .then((text) => {
+  (async () => {
+    try {
+      const response = await fetch("http://localhost:11434/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "qwen3.5:4b",
+          stream: false,
+          keep_alive: "10m",
+          messages: [
+            {
+              role: "system",
+              content: `
+你是 GitHub 页面本地化翻译器。
+
+任务：
+把用户提供的英文普通界面文字或功能说明翻译成自然、简洁的简体中文。
+
+必须遵守以下规则：
+
+1. 只返回最终译文。
+2. 不要解释翻译过程。
+3. 不要输出 Thinking Process。
+4. 不要添加引号。
+5. 技术名词尽量保持原样。
+6. 必须保持以下内容原样：
+   - 模型名称
+   - 软件名称
+   - 技术名称
+   - 编程语言名称
+   - 文件名
+   - 文件扩展名
+   - 代码
+   - 命令
+   - URL
+   - 用户名
+   - 仓库名
+   - 版本号
+   - API 路径
+   - 参数名
+   - 变量名
+   - GitHub 专有名称
+7. 不要翻译代码、命令、文件名和 URL。
+8. 如果输入本身已经是中文，则原样返回。
+9. 保持原文的大致语气和格式。
+`
+            },
+            {
+              role: "user",
+              content: String(msg.text || "")
+            }
+          ]
+        })
+      });
+
+      const raw = await response.text();
+
+      if (!response.ok) {
+        throw new Error(`Ollama HTTP ${response.status}: ${raw}`);
+      }
+
+      const data = JSON.parse(raw);
+
+      const translated =
+        data?.message?.content ??
+        data?.response ??
+        "";
+
+      if (!translated) {
+        throw new Error("Ollama 没有返回翻译内容");
+      }
+
       sendResponse({
         ok: true,
-        text: text
+        text: translated.trim()
       });
-    })
-    .catch((error) => {
-      console.error("Qwen translation error:", error);
+
+    } catch (error) {
+      console.error("GitHub Auto Chinese:", error);
 
       sendResponse({
         ok: false,
-        error: error.message
+        error: String(error)
       });
-    });
+    }
+  })();
 
   return true;
 });
-
-async function translateWithQwen(text) {
-  const response = await fetch("http://localhost:11434/api/chat", {
-    method: "POST",
-
-    headers: {
-      "Content-Type": "application/json"
-    },
-
-    body: JSON.stringify({
-      model: "qwen3.5:4b",
-      stream: false,
-      keep_alive: "10m",
-
-      messages: [
-        {
-          role: "system",
-
-          content: `
-你是一个 GitHub 网页本地化翻译器。
-
-任务：
-把 GitHub 页面上的普通英文界面文字翻译成简体中文。
-
-非常重要：
-
-1. 只翻译普通自然语言。
-2. 不要翻译模型名称。
-3. 不要翻译技术名称。
-4. 不要翻译文件名。
-5. 不要翻译代码。
-6. 不要翻译命令。
-7. 不要翻译 URL。
-8. 不要翻译用户名、仓库名。
-9. 不要翻译 API 路径。
-10. 不要翻译版本号。
-11. 不要翻译变量名、函数名、参数名。
-12. 保留所有占位符，例如 ⟦KEEP_0⟧、⟦KEEP_1⟧。
-13. 只输出最终翻译结果。
-14. 不要解释。
-15. 不要分析。
-16. 不要添加“翻译如下”等额外文字。
-
-例如：
-
-Input:
-Create a new repository named ⟦KEEP_0⟧
-
-Output:
-创建一个名为 ⟦KEEP_0⟧ 的新仓库
-`
-        },
-
-        {
-          role: "user",
-          content: text
-        }
-      ]
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      "Ollama 请求失败，HTTP 状态码: " + response.status
-    );
-  }
-
-  const data = await response.json();
-
-  if (
-    !data.message ||
-    typeof data.message.content !== "string"
-  ) {
-    throw new Error("Ollama 没有返回有效的翻译结果");
-  }
-
-  return data.message.content.trim();
-}
