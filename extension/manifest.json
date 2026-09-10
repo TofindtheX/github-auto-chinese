@@ -1,8 +1,21 @@
 {
   "manifest_version": 3,
   "name": "GitHub Auto Chinese",
-  "version": "1.0.0",
-  "description": "Translate GitHub basic interface text into Simplified Chinese.",
+  "version": "1.1.0",
+  "description": "Translate GitHub interface text into Simplified Chinese using local Qwen.",
+
+  "permissions": [
+    "storage"
+  ],
+
+  "host_permissions": [
+    "https://github.com/*",
+    "http://localhost:11434/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
 
   "content_scripts": [
     {
